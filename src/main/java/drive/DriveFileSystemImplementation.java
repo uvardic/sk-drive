@@ -13,6 +13,7 @@ import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
+import com.google.api.services.drive.model.FileList;
 import exceptions.FileNotSupportedException;
 import exceptions.FileSystemClosedException;
 import meta.FileMetaData;
@@ -189,14 +190,6 @@ public class DriveFileSystemImplementation implements FileSystem {
         }
     }
 
-    public static void main(String... args) {
-        DriveFileSystemImplementation implementation = new DriveFileSystemImplementation();
-        implementation.initialize();
-
-        implementation.excludeFileExtension(".jpg");
-        implementation.upload(new File("src/main/resources/upload_test.png"), "asd");
-    }
-
 
     @Override
     public void upload(File file, String s, FileMetaData fileMetaData) {
@@ -224,22 +217,78 @@ public class DriveFileSystemImplementation implements FileSystem {
     }
 
     @Override
-    public void createDir(String s) {
+    public void createDir(final String dirName) {
+        validateMethod(dirName);
 
+        if (service == null)
+            initialize();
+
+        final com.google.api.services.drive.model.File fileMetadata = new com.google.api.services.drive.model.File();
+
+        fileMetadata.setName(dirName);
+        fileMetadata.setMimeType("application/vnd.google-apps.folder");
+
+        try {
+            service.files().create(fileMetadata).setFields("id").execute();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
-    public List<File> findAll() {
-        return null;
+    public Collection<?> findFileByName(final String name) {
+        validateMethod(name);
+
+        return findBy(String.format("name='%s'", name));
     }
 
     @Override
-    public List<File> findByName(String s) {
-        return null;
+    public Collection<?> findFileByExtension(final String extension) {
+        validateMethod(extension);
+
+        return findBy(String.format("name contains '%s'", extension));
     }
 
     @Override
-    public List<File> findByExtension(String s) {
-        return null;
+    public Collection<?> findDirectory(final String name) {
+        validateMethod(name);
+
+        return findBy(String.format("name='%s' and mimeType='application/vnd.google-apps.folder'", name));
+    }
+
+    private List<com.google.api.services.drive.model.File> findBy(final String quarry) {
+        if (service == null)
+            initialize();
+
+        String pageToken = null;
+
+        FileList result = null;
+
+        do {
+            try {
+                result = service.files().list()
+                        .setQ(quarry)
+                        .setSpaces("drive")
+                        .setFields("nextPageToken, files(id, name)")
+                        .setPageToken(pageToken)
+                        .execute();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            if (result == null)
+                return Collections.emptyList();
+
+            pageToken = result.getNextPageToken();
+        } while (pageToken != null);
+
+        return result.getFiles();
+    }
+
+    public static void main(String... args) {
+        DriveFileSystemImplementation implementation = new DriveFileSystemImplementation();
+        implementation.initialize();
+
+        System.out.println(implementation.findDirectory("root"));
     }
 }
