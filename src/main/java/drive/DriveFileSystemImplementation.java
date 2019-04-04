@@ -217,22 +217,72 @@ public class DriveFileSystemImplementation implements FileSystem {
     }
 
     @Override
-    public void createDir(final String dirName) {
-        validateMethod(dirName);
+    public void createDir(final String dirPath) {
+        validateMethod(dirPath);
 
         if (service == null)
             initialize();
 
         final com.google.api.services.drive.model.File fileMetadata = new com.google.api.services.drive.model.File();
 
+        // last path component
+        final String dirName = dirPath.substring(dirPath.lastIndexOf("/")).substring(1);
+
         fileMetadata.setName(dirName);
         fileMetadata.setMimeType("application/vnd.google-apps.folder");
+
+        final List<String> parentId = getParentId(dirPath);
+
+        if (!parentId.isEmpty())
+            fileMetadata.setParents(parentId);
 
         try {
             service.files().create(fileMetadata).setFields("id").execute();
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+
+    private List<String> getParentId(final String dirPath) {
+        final String[] dirNames = trimPath(dirPath).split("/");
+
+        final List<String> folderId = new ArrayList<>();
+
+        String pageToken = null;
+
+        for (final String name : dirNames)
+            try {
+                final FileList result = service.files().list()
+                        .setQ(String.format("name='%s'", name))
+                        .setSpaces("drive")
+                        .setFields("nextPageToken, files(id)")
+                        .setPageToken(pageToken)
+                        .execute();
+
+                final List<com.google.api.services.drive.model.File> foundFiles = result.getFiles();
+
+                if (foundFiles.isEmpty())
+                    return folderId;
+
+                if (folderId.size() == 0)
+                    folderId.add(foundFiles.get(0).getId());
+                else
+                    folderId.set(0, foundFiles.get(0).getId());
+
+                pageToken = result.getNextPageToken();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        return Collections.unmodifiableList(folderId);
+    }
+
+    private String trimPath(final String dirPath) {
+        if (dirPath.charAt(0) == '/')
+            return dirPath.substring(1, dirPath.lastIndexOf("/"));
+
+        return dirPath.substring(0, dirPath.lastIndexOf("/"));
     }
 
     @Override
@@ -289,6 +339,8 @@ public class DriveFileSystemImplementation implements FileSystem {
         DriveFileSystemImplementation implementation = new DriveFileSystemImplementation();
         implementation.initialize();
 
-        System.out.println(implementation.findDirectory("root"));
+        implementation.createDir("/drive_impl_test/test/bas");
+        implementation.createDir("drive_imp_test2/bug");
+        implementation.createDir("drive_impl_test/test2/basss");
     }
 }
