@@ -13,6 +13,7 @@ import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
+import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 import exceptions.FileNotSupportedException;
 import exceptions.FileSystemClosedException;
@@ -26,7 +27,7 @@ import java.util.*;
 
 import static util.Preconditions.*;
 
-public class DriveFileSystemImplementation implements FileSystem {
+public class DriveFileSystemImplementation implements FileSystem<File> {
 
     private static final int PORT = 8888;
 
@@ -38,7 +39,7 @@ public class DriveFileSystemImplementation implements FileSystem {
 
     private static final String MIME_TYPES_DELIMITER = "#";
 
-    private static final File MIME_TYPES_FILE = new File("src/main/resources/mime_types.txt");
+    private static final String MIME_FILE_PATH = "src/main/resources/mime_types.txt";
 
     private static final JsonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
 
@@ -77,7 +78,7 @@ public class DriveFileSystemImplementation implements FileSystem {
 
         final GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                 httpTransport, JSON_FACTORY, clientSecrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(new File(TOKENS_DIRECTORY_PATH)))
+                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY_PATH)))
                 .setAccessType("offline")
                 .build();
 
@@ -89,7 +90,7 @@ public class DriveFileSystemImplementation implements FileSystem {
     private final List<String> mimeTypes = new ArrayList<>();
 
     private void loadMimeTypes() {
-        try (final BufferedReader reader = new BufferedReader(new FileReader(MIME_TYPES_FILE))) {
+        try (final BufferedReader reader = new BufferedReader(new FileReader(MIME_FILE_PATH))) {
             String mimeType = reader.readLine();
 
             while (mimeType != null) {
@@ -104,8 +105,8 @@ public class DriveFileSystemImplementation implements FileSystem {
     // method is intended for com.google.api.client.http.FileContent
     // FileContent default value for mime type is null so its safe for
     // this method to return it if no other valid type was found
-    private String findMimeType(final File file) {
-        final String fileExtension = file.getPath().substring(file.getPath().lastIndexOf("."));
+    private String findMimeType(final String filePath) {
+        final String fileExtension = filePath.substring(filePath.lastIndexOf("."));
 
         final String foundType = mimeTypes.stream()
                 .filter(mimeType -> compareExtensionWithMimeType(fileExtension, mimeType))
@@ -154,8 +155,11 @@ public class DriveFileSystemImplementation implements FileSystem {
         excludedExtensions.add(fileExtension);
     }
 
-    private void checkExcluded(final File file) {
-        final String fileExtension = file.getPath().substring(file.getPath().lastIndexOf("."));
+    private void checkExcluded(final String filePath) {
+        if (!filePath.contains("."))
+            throw new FileNotSupportedException(String.format("File path: %s, not supported", filePath));
+
+        final String fileExtension = filePath.substring(filePath.lastIndexOf("."));
 
         if (isExcluded(fileExtension))
             throw new FileNotSupportedException(String.format("File extension: %s, not supported", fileExtension));
@@ -166,22 +170,54 @@ public class DriveFileSystemImplementation implements FileSystem {
     }
 
     @Override
-    public void upload(final File file, final String path) {
-        validateMethod(file, path);
-        checkExcluded(file);
+    public void upload(final String filePath, final String path) {
+        validateMethod(filePath, path);
+        checkExcluded(filePath);
 
-        uploadWorker(file);
+        uploadWorker(filePath, path, null);
     }
 
-    private void uploadWorker(final File file) {
+    @Override
+    public void upload(final FileMetaData fileMetadata, final String path) {
+        validateMethod(path, fileMetadata);
+        checkExcluded(fileMetadata.getFile().getPath());
+
+        final File driveMetadata = new File();
+
+        driveMetadata.setName(fileMetadata.getFileName());
+        driveMetadata.setDescription(fileMetadata.getDescription());
+        driveMetadata.setMimeType(fileMetadata.getMimeType());
+        driveMetadata.setFileExtension(fileMetadata.getExtension());
+        driveMetadata.setVersion(fileMetadata.getVersion());
+
+        uploadWorker(fileMetadata.getFile().getPath(), path, driveMetadata);
+    }
+
+    @Override
+    public void uploadCollection(final List<String> files, final String path) {
+        validateMethod(files, path);
+        files.forEach(this::checkExcluded);
+
+        files.forEach(file -> uploadWorker(file, path, null));
+    }
+
+    private void uploadWorker(final String filePath, final String path, File fileMetadata) {
         if (service == null)
             initialize();
 
-        final com.google.api.services.drive.model.File fileMetadata = new com.google.api.services.drive.model.File();
+        final java.io.File file = new java.io.File(filePath);
 
-        fileMetadata.setName(file.getName());
+        if (fileMetadata == null) {
+            fileMetadata = new File();
+            fileMetadata.setName(file.getName());
+        }
 
-        final FileContent fileContent = new FileContent(findMimeType(file), file);
+        final List<String> parentId = getParentId(path);
+
+        if (!parentId.isEmpty())
+            fileMetadata.setParents(parentId);
+
+        final FileContent fileContent = new FileContent(findMimeType(filePath), file);
 
         try {
             service.files().create(fileMetadata, fileContent).setFields("id").execute();
@@ -190,30 +226,41 @@ public class DriveFileSystemImplementation implements FileSystem {
         }
     }
 
-
     @Override
-    public void upload(File file, String s, FileMetaData fileMetaData) {
+    public void download(final String path) {
+        validateMethod(path);
 
+        downloadWorker(path);
     }
 
     @Override
-    public void uploadCollection(Collection<File> collection, String s) {
-
+    public void downloadMultiple(final List<String> filePaths) {
+        filePaths.forEach(this::downloadWorker);
     }
 
-    @Override
-    public void uploadCollection(Map<File, FileMetaData> map, String s) {
+    private void downloadWorker(final String path) {
+        if (service == null)
+            initialize();
 
+        if (!path.contains("/")) {
+            findFileByName(path).forEach(file -> downloadFile(file.getId(), path));
+            return;
+        }
+
+        final String fileName = path.substring(path.lastIndexOf("/"));
+
+        findFileByName(fileName).forEach(file -> downloadFile(file.getId(), fileName));
     }
 
-    @Override
-    public void download(File file) {
+    private void downloadFile(final String fileId, final String fileName) {
+        try {
+            final OutputStream outputStream = new FileOutputStream(
+                    String.format("%s/Downloads/%s", System.getProperty("user.home"), fileName));
 
-    }
-
-    @Override
-    public void downloadCollection(Collection<File> list) {
-
+            service.files().get(fileId).executeMediaAndDownloadTo(outputStream);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -223,7 +270,7 @@ public class DriveFileSystemImplementation implements FileSystem {
         if (service == null)
             initialize();
 
-        final com.google.api.services.drive.model.File fileMetadata = new com.google.api.services.drive.model.File();
+        final File fileMetadata = new File();
 
         // last path component
         final String dirName = dirPath.substring(dirPath.lastIndexOf("/")).substring(1);
@@ -244,8 +291,8 @@ public class DriveFileSystemImplementation implements FileSystem {
     }
 
 
-    private List<String> getParentId(final String dirPath) {
-        final String[] dirNames = trimPath(dirPath).split("/");
+    private List<String> getParentId(final String path) {
+        final String[] dirNames = trimPath(path).split("/");
 
         final List<String> folderId = new ArrayList<>();
 
@@ -260,7 +307,7 @@ public class DriveFileSystemImplementation implements FileSystem {
                         .setPageToken(pageToken)
                         .execute();
 
-                final List<com.google.api.services.drive.model.File> foundFiles = result.getFiles();
+                final List<File> foundFiles = result.getFiles();
 
                 if (foundFiles.isEmpty())
                     return folderId;
@@ -286,27 +333,27 @@ public class DriveFileSystemImplementation implements FileSystem {
     }
 
     @Override
-    public Collection<?> findFileByName(final String name) {
+    public List<File> findFileByName(final String name) {
         validateMethod(name);
 
         return findBy(String.format("name='%s'", name));
     }
 
     @Override
-    public Collection<?> findFileByExtension(final String extension) {
+    public List<File> findFileByExtension(final String extension) {
         validateMethod(extension);
 
         return findBy(String.format("name contains '%s'", extension));
     }
 
     @Override
-    public Collection<?> findDirectory(final String name) {
+    public List<File> findDirectory(final String name) {
         validateMethod(name);
 
         return findBy(String.format("name='%s' and mimeType='application/vnd.google-apps.folder'", name));
     }
 
-    private List<com.google.api.services.drive.model.File> findBy(final String quarry) {
+    private List<File> findBy(final String quarry) {
         if (service == null)
             initialize();
 
@@ -333,14 +380,5 @@ public class DriveFileSystemImplementation implements FileSystem {
         } while (pageToken != null);
 
         return result.getFiles();
-    }
-
-    public static void main(String... args) {
-        DriveFileSystemImplementation implementation = new DriveFileSystemImplementation();
-        implementation.initialize();
-
-        implementation.createDir("/drive_impl_test/test/bas");
-        implementation.createDir("drive_imp_test2/bug");
-        implementation.createDir("drive_impl_test/test2/basss");
     }
 }

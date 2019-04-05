@@ -101,4 +101,3 @@ hs_err_pid*
 # Google drive credentials
 /tokens
 /src/main/resources/client_secret.json
-/src/main/resources/upload_test.png
