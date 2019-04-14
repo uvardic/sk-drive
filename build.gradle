@@ -21,9 +21,20 @@ repositories {
 
 libsDirName = '../../sk-libs'
 
-jar {
-    baseName = 'drive-system'
+task copyMimeTypes(type: Copy) {
+    from file("$buildDir/resources/main/mime_types.txt")
+    into file("$buildDir/resources")
+}
+
+task uberJar(type: Jar) {
     version = (findProperty('sk_drive_lib_version'))
+
+    from sourceSets.main.output
+
+    dependsOn configurations.runtimeClasspath
+    from {
+        configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
+    }
 }
 
 dependencies {

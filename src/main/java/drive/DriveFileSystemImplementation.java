@@ -23,9 +23,12 @@ import system.FileSystemManager;
 
 import java.io.*;
 import java.security.GeneralSecurityException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
-import static util.Preconditions.*;
+import static util.Preconditions.checkArgument;
+import static util.Preconditions.checkNotNull;
 
 public class DriveFileSystemImplementation implements FileSystem<File> {
 
@@ -39,7 +42,7 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
 
     private static final String MIME_TYPES_DELIMITER = "#";
 
-    private static final String MIME_FILE_PATH = "src/main/resources/mime_types.txt";
+    private static final String MIME_FILE_PATH = "/mime_types.txt";
 
     private static final JsonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
 
@@ -50,6 +53,10 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
     }
 
     private DriveFileSystemImplementation() {}
+
+    private InputStream loadResource(final String path) {
+        return getClass().getResourceAsStream(path);
+    }
 
     private Drive service;
 
@@ -90,7 +97,7 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
     private final List<String> mimeTypes = new ArrayList<>();
 
     private void loadMimeTypes() {
-        try (final BufferedReader reader = new BufferedReader(new FileReader(MIME_FILE_PATH))) {
+        try (final BufferedReader reader = new BufferedReader(new InputStreamReader(loadResource(MIME_FILE_PATH)))) {
             String mimeType = reader.readLine();
 
             while (mimeType != null) {
