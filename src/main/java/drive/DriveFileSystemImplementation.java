@@ -186,19 +186,19 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
     }
 
     @Override
-    public void upload(final FileMetaData fileMetadata, final String path) {
-        validateMethod(path, fileMetadata);
-        checkExcluded(fileMetadata.getFile().getPath());
+    public void upload(final String filePath, final FileMetaData fileMetadata, final String destinationPath) {
+        validateMethod(filePath, destinationPath, fileMetadata);
+        checkExcluded(filePath);
 
         final File driveMetadata = new File();
 
         driveMetadata.setName(fileMetadata.getFileName());
         driveMetadata.setDescription(fileMetadata.getDescription());
         driveMetadata.setMimeType(fileMetadata.getMimeType());
-        driveMetadata.setFileExtension(fileMetadata.getExtension());
+//        driveMetadata.setFileExtension(fileMetadata.getExtension());
         driveMetadata.setVersion(fileMetadata.getVersion());
 
-        uploadWorker(fileMetadata.getFile().getPath(), path, driveMetadata);
+        uploadWorker(filePath, destinationPath, driveMetadata);
     }
 
     @Override
