@@ -377,7 +377,7 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
     public List<File> findDirectory(final String name) {
         validateMethod(name);
 
-        return findBy(String.format("and name='%s' and mimeType='application/vnd.google-apps.folder'" +
+        return findBy(String.format("name='%s' and mimeType='application/vnd.google-apps.folder'" +
                 " and trashed=false", name));
     }
 
