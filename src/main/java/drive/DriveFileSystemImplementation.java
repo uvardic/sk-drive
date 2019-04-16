@@ -15,6 +15,7 @@ import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
+import exceptions.FileNotFoundException;
 import exceptions.FileNotSupportedException;
 import exceptions.FileSystemClosedException;
 import meta.FileMetaData;
@@ -54,8 +55,8 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
 
     private DriveFileSystemImplementation() {}
 
-    private InputStream loadResource(final String path) {
-        return getClass().getResourceAsStream(path);
+    private static InputStream loadResource(final String path) {
+        return DriveFileSystemImplementation.class.getResourceAsStream(path);
     }
 
     private Drive service;
@@ -79,7 +80,7 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
     }
 
     private static Credential getCredentials(final NetHttpTransport httpTransport) throws IOException {
-        final InputStream input = DriveFileSystemImplementation.class.getResourceAsStream(CREDENTIALS_FILE_PATH);
+        final InputStream input = loadResource(CREDENTIALS_FILE_PATH);
 
         final GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(input));
 
@@ -254,9 +255,14 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
             return;
         }
 
-        final String fileName = path.substring(path.lastIndexOf("/"));
+        final String fileName = path.substring(path.lastIndexOf("/") + 1);
 
-        findFileByName(fileName).forEach(file -> downloadFile(file.getId(), fileName));
+        final List<File> foundFiles = findFileByName(fileName);
+
+        if (foundFiles.isEmpty())
+            throw new FileNotFoundException(String.format("File %s not found", fileName));
+
+        foundFiles.forEach(file -> downloadFile(file.getId(), fileName));
     }
 
     private void downloadFile(final String fileId, final String fileName) {
@@ -340,24 +346,39 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
     }
 
     @Override
+    public List<File> findAll() {
+        validateMethod();
+
+        return findBy("visibility=anyoneCanFind and trashed=false");
+    }
+
+    @Override
     public List<File> findFileByName(final String name) {
         validateMethod(name);
 
-        return findBy(String.format("name='%s'", name));
+        return findBy(String.format("name='%s' and trashed=false", name));
     }
 
     @Override
     public List<File> findFileByExtension(final String extension) {
         validateMethod(extension);
 
-        return findBy(String.format("name contains '%s'", extension));
+        return findBy(String.format("name contains '%s' and trashed=false", extension));
+    }
+
+    @Override
+    public List<File> findFileByParent(final File parent) {
+        validateMethod(parent);
+
+        return findBy(String.format("'%s' in parents and trashed=false", parent.getId()));
     }
 
     @Override
     public List<File> findDirectory(final String name) {
         validateMethod(name);
 
-        return findBy(String.format("name='%s' and mimeType='application/vnd.google-apps.folder'", name));
+        return findBy(String.format("and name='%s' and mimeType='application/vnd.google-apps.folder'" +
+                " and trashed=false", name));
     }
 
     private List<File> findBy(final String quarry) {
@@ -371,7 +392,7 @@ public class DriveFileSystemImplementation implements FileSystem<File> {
         do {
             try {
                 result = service.files().list()
-                        .setQ(quarry)
+                        .setQ( quarry)
                         .setSpaces("drive")
                         .setFields("nextPageToken, files(id, name)")
                         .setPageToken(pageToken)
